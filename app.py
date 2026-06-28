@@ -36,8 +36,7 @@ if __name__ == "__main__":
 
 # --- Genetic algorithm utilities ---
 SLOT_COUNT = 90
-LOCKED_START = 9
-LOCKED_END = 27
+LOCKED_RANGES = [(9, 27), (54, 72)]  # 0-based indices for 1-based slots 10-27 and 55-72
 DEFAULT_GENE_COUNT = 4
 
 
@@ -162,36 +161,144 @@ def load_parents_from_file(filename="parents.txt"):
     return parents
 
 
-def crossover_and_fill(parent1, parent2, locked_start=LOCKED_START, locked_end=LOCKED_END):
+def build_student_queue(parent, locked_student_ids):
+    queue = []
+    seen = set()
+    for chromosome in parent.chromosomes:
+        for student_id in chromosome.genes:
+            if student_id == 0:
+                continue
+            if student_id in seen:
+                continue
+            if student_id in locked_student_ids:
+                continue
+            seen.add(student_id)
+            queue.append(int(student_id))
+    return queue
+
+
+def crossover_and_fill(parent1, parent2, locked_ranges=None, mahasiswa=None, availability=None):
     child1 = create_empty_individual(gene_count=parent1.gene_count)
     child2 = create_empty_individual(gene_count=parent2.gene_count)
-    locked_indices = list(range(locked_start, locked_end))
 
-    for idx in locked_indices:
+    if locked_ranges is None:
+        locked_ranges = LOCKED_RANGES
+
+    locked_indices = set()
+    for start, end in locked_ranges:
+        locked_indices.update(range(start, end))
+
+    for idx in sorted(locked_indices):
         child1.chromosomes[idx] = Chromosome(parent1.chromosomes[idx].genes.copy(), gene_count=parent1.gene_count)
         child2.chromosomes[idx] = Chromosome(parent2.chromosomes[idx].genes.copy(), gene_count=parent2.gene_count)
 
-    unlocked_indices = [i for i in range(SLOT_COUNT) if i not in set(locked_indices)]
-    for slot_idx in unlocked_indices:
-        child1.chromosomes[slot_idx] = Chromosome(parent2.chromosomes[slot_idx].genes.copy(), gene_count=parent2.gene_count)
-        child2.chromosomes[slot_idx] = Chromosome(parent1.chromosomes[slot_idx].genes.copy(), gene_count=parent1.gene_count)
+    locked_student_ids = {
+        int(student_id)
+        for idx in sorted(locked_indices)
+        for student_id in child1.chromosomes[idx].genes
+        if student_id != 0
+    }
 
-    return child1, child2
+    child1_schedule = [chromosome.genes.copy() for chromosome in child1.chromosomes]
+    child2_schedule = [chromosome.genes.copy() for chromosome in child2.chromosomes]
+
+    child1_queue = build_student_queue(parent2, locked_student_ids)
+    child2_queue = build_student_queue(parent1, {
+        int(student_id)
+        for idx in sorted(locked_indices)
+        for student_id in child2.chromosomes[idx].genes
+        if student_id != 0
+    })
+
+    child1_failure = None
+    for student_id in child1_queue:
+        placed = False
+        for slot_number in range(1, SLOT_COUNT + 1):
+            slot_idx = slot_number - 1
+            if slot_idx in locked_indices:
+                continue
+            if mahasiswa is not None and availability is not None:
+                if not check_availability(student_id, slot_number, mahasiswa, availability):
+                    continue
+            room = get_empty_room(child1_schedule, slot_idx)
+            if room is None:
+                continue
+            if mahasiswa is not None and availability is not None and not check_conflict(child1_schedule, slot_idx, student_id, mahasiswa):
+                continue
+            child1_schedule[slot_idx][room] = student_id
+            child1.chromosomes[slot_idx] = Chromosome(child1_schedule[slot_idx].copy(), gene_count=parent1.gene_count)
+            placed = True
+            break
+        if not placed:
+            child1_failure = f"Student {student_id} could not be placed"
+            break
+
+    child2_failure = None
+    for student_id in child2_queue:
+        placed = False
+        for slot_number in range(1, SLOT_COUNT + 1):
+            slot_idx = slot_number - 1
+            if slot_idx in locked_indices:
+                continue
+            if mahasiswa is not None and availability is not None:
+                if not check_availability(student_id, slot_number, mahasiswa, availability):
+                    continue
+            room = get_empty_room(child2_schedule, slot_idx)
+            if room is None:
+                continue
+            if mahasiswa is not None and availability is not None and not check_conflict(child2_schedule, slot_idx, student_id, mahasiswa):
+                continue
+            child2_schedule[slot_idx][room] = student_id
+            child2.chromosomes[slot_idx] = Chromosome(child2_schedule[slot_idx].copy(), gene_count=parent2.gene_count)
+            placed = True
+            break
+        if not placed:
+            child2_failure = f"Student {student_id} could not be placed"
+            break
+
+    return child1, child2, child1_failure, child2_failure
 
 
-def generate_all_children(parents):
+def generate_all_children(parents, mahasiswa=None, availability=None, error_callback=None):
     normalized_parents = normalize_parents(parents)
     if len(normalized_parents) < 2:
         raise ValueError("At least 2 parents are required to generate children")
 
     all_children = []
+    failed_children = []
     for i, j in itertools.combinations(range(len(normalized_parents)), 2):
         parent1 = normalized_parents[i]
         parent2 = normalized_parents[j]
-        child1, child2 = crossover_and_fill(parent1, parent2)
-        all_children.append(child1.to_array())
-        all_children.append(child2.to_array())
-    return all_children
+        child1, child2, child1_failure, child2_failure = crossover_and_fill(
+            parent1,
+            parent2,
+            mahasiswa=mahasiswa,
+            availability=availability,
+        )
+
+        if child1_failure is not None:
+            failed_children.append((i, j, 1, child1_failure))
+            if error_callback is not None:
+                error_callback(f"Child 1 from parents {i+1} and {j+1} could not be made: {child1_failure}")
+        else:
+            all_children.append({
+                "parents": (i + 1, j + 1),
+                "child_index": 1,
+                "schedule": child1.to_array(),
+            })
+
+        if child2_failure is not None:
+            failed_children.append((i, j, 2, child2_failure))
+            if error_callback is not None:
+                error_callback(f"Child 2 from parents {i+1} and {j+1} could not be made: {child2_failure}")
+        else:
+            all_children.append({
+                "parents": (i + 1, j + 1),
+                "child_index": 2,
+                "schedule": child2.to_array(),
+            })
+
+    return all_children, failed_children
 
 
 # --- Preprocessing & GA functions ---
@@ -327,6 +434,22 @@ def generate_initial_population(population_size, mahasiswa, availability, max_re
     return population
 
 
+def format_schedule_for_display(schedule):
+    if hasattr(schedule, "to_array"):
+        schedule = schedule.to_array()
+
+    if isinstance(schedule, list):
+        formatted = []
+        for idx, slot in enumerate(schedule, start=1):
+            if isinstance(slot, (list, tuple)):
+                formatted.append(f"{idx}: [{', '.join(str(int(value)) for value in slot)}]")
+            else:
+                formatted.append(f"{idx}: [{int(slot)}]")
+        return formatted
+
+    return schedule
+
+
 # --- Streamlit UI ---
 
 st.title("Sistem Penjadwalan Sidang Menggunakan Genetic Algorithm")
@@ -387,20 +510,28 @@ if st.button("Generate Populasi Awal"):
 
     for i, chromosome in enumerate(population, start=1):
         st.subheader(f"Populasi {i}")
-        for slot, ruang in enumerate(chromosome, start=1):
-            st.text(f"Slot {slot:2d} : {ruang}")
+        st.code(str(format_schedule_for_display(chromosome)))
         st.divider()
 
 
-# Display children
+# Display parents and children
+if 'parents' in st.session_state:
+    st.header('Initial Parents')
+    parents = st.session_state['parents']
+    for i, parent in enumerate(parents, start=1):
+        with st.expander(f'Parent {i}'):
+            st.code("\n".join(format_schedule_for_display(parent)))
+
 if 'children' in st.session_state:
     children = st.session_state['children']
     st.header('First 10 Children')
     count = min(10, len(children))
     for i in range(count):
-        with st.expander(f'Child {i+1} (slots: {len(children[i])})'):
-            st.write(children[i])
-            st.write('Preview - first 3 chromosomes:', children[i][:3])
+        child = children[i]
+        parent_pair = child.get("parents", ("unknown", "unknown"))
+        child_index = child.get("child_index", 0)
+        with st.expander(f'Child {i+1} from parents {parent_pair[0]} & {parent_pair[1]} (child {child_index}, slots: {len(child["schedule"])})'):
+            st.code("\n".join(format_schedule_for_display(child["schedule"])))
 else:
     st.info("No children generated yet. Click 'Generate All Children (All pair crossovers)' after creating parents.")
 
@@ -409,11 +540,16 @@ if 'parents' in st.session_state and 'children' not in st.session_state:
     if st.button("Generate All Children (All pair crossovers)"):
         try:
             parents_for_ga = st.session_state['parents']
-            children = generate_all_children(parents_for_ga)
+            children, failed_children = generate_all_children(
+                parents_for_ga,
+                mahasiswa=mahasiswa,
+                availability=availability,
+                error_callback=st.error,
+            )
             st.session_state['children'] = children
+            st.session_state['failed_children'] = failed_children
             st.success(f"Generated {len(children)} children and stored in session as 'children'.")
-            if len(children) > 0:
-                st.write("Example first child (first slot):", children[0][0])
-                st.write("First 3 chromosomes of the first child:", children[0][:3])
+            if failed_children:
+                st.warning(f"{len(failed_children)} child pair(s) could not be made.")
         except Exception as e:
             st.error(f"Failed to generate children: {e}")
