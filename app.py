@@ -482,6 +482,108 @@ def format_schedule_for_display(schedule):
     return schedule
 
 
+# ==========================================
+# === [BAGIAN MUTASI ANDA: FUNGSI LOGIKA] ===
+# ==========================================
+
+# Theo (Mutasi) Tukar - VERSI PERBAIKAN BUG LOGIKA DEEP COPY & LOG DISPLAY
+def swap_mutation(chromosome_schedule, locked_ranges=LOCKED_RANGES, debug=False):
+    """
+    Fungsi Mutasi Tukar (Swap Mutation) tugas bagian saya.
+    Memilih 2 slot secara acak yang TIDAK dikunci (di luar locked_ranges),
+    lalu melakukan tukar posisi (swap) isi dari kedua slot tersebut.
+    """
+    debug_logs = []
+    
+    # 1. Cari semua indeks slot yang boleh dimutasi (tidak masuk dalam locked_ranges)
+    valid_indices = []
+    for idx in range(SLOT_COUNT):
+        is_locked = False
+        for start, end in locked_ranges:
+            if start <= idx <= end:
+                is_locked = True
+                break
+        if not is_locked:
+            valid_indices.append(idx)
+            
+    if len(valid_indices) < 2:
+        if debug:
+            debug_logs.append("Gagal Mutasi: Slot valid kurang dari 2.")
+        return chromosome_schedule, debug_logs
+
+    # 2. Pilih secara acak 2 slot berbeda dari daftar slot yang valid
+    idx1, idx2 = random.sample(valid_indices, 2)
+    
+    # 3. Lakukan Swap dengan menyalin sub-list (deep-copy tingkat 1) agar tidak merusak data awal
+    mutated_schedule = [slot.copy() for slot in chromosome_schedule]
+    val1 = mutated_schedule[idx1]
+    val2 = mutated_schedule[idx2]
+    
+    mutated_schedule[idx1] = val2
+    mutated_schedule[idx2] = val1
+    
+    if debug:
+        # Menghapus angka 0 dari logs agar log fokus pada ID Mahasiswa yang aktif/terjadwal
+        mhs1_clean = [m for m in val1 if m != 0]
+        mhs2_clean = [m for m in val2 if m != 0]
+        
+        info_slot1 = f"Mhs ID: {mhs1_clean}" if mhs1_clean else "Slot Kosong"
+        info_slot2 = f"Mhs ID: {mhs2_clean}" if mhs2_clean else "Slot Kosong"
+        
+        debug_logs.append(
+            f"🧬 **MUTASI BERHASIL:** Menukar **Slot {idx1+1}** ({info_slot1}) "
+            f"dengan **Slot {idx2+1}** ({info_slot2})"
+        )
+        
+    return mutated_schedule, debug_logs
+
+
+def mutate_all_children(children_list, mutation_rate=0.2, debug=False):
+    """
+    Mengiterasi semua children hasil crossover untuk dicek apakah terkena probabilitas mutasi.
+    Sudah disesuaikan agar membaca format dictionary dari output crossover.
+    """
+    mutated_children = []
+    mutation_count = 0
+    all_debug_logs = {}
+    
+    for i, child_obj in enumerate(children_list):
+        # Ambil list schedule asli dari dalam objek dictionary teman
+        if isinstance(child_obj, dict):
+            schedule_to_mutate = child_obj.get("schedule", [])
+            parent_info = child_obj.get("parents", ("unknown", "unknown"))
+            child_idx_info = child_obj.get("child_index", 0)
+        else:
+            schedule_to_mutate = child_obj
+            parent_info = ("unknown", "unknown")
+            child_idx_info = 0
+
+        # Cek berdasarkan Mutation Rate apakah anak ini terkena mutasi
+        if random.random() < mutation_rate:
+            new_schedule, logs = swap_mutation(schedule_to_mutate, debug=debug)
+            mutation_count += 1
+            
+            # Kembalikan hasilnya ke dalam struktur dictionary yang sama agar UI di bawah tidak error
+            if isinstance(child_obj, dict):
+                mutated_children.append({
+                    "parents": parent_info,
+                    "child_index": child_idx_info,
+                    "schedule": new_schedule
+                })
+            else:
+                mutated_children.append(new_schedule)
+                
+            if debug and logs:
+                all_debug_logs[i] = logs
+        else:
+            # Jika tidak mutasi, masukkan objek asli tanpa perubahan
+            mutated_children.append(child_obj) 
+            
+    return mutated_children, mutation_count, all_debug_logs
+
+# === [AKHIR LOGIKA MUTASI] ===
+
+
 # --- Streamlit UI ---
 
 st.title("Sistem Penjadwalan Sidang Menggunakan Genetic Algorithm")
@@ -598,3 +700,51 @@ if 'parents' in st.session_state and 'children' not in st.session_state:
                 st.warning(f"{len(failed_children)} child pair(s) could not be made.")
         except Exception as e:
             st.error(f"Failed to generate children: {e}")
+
+
+# ============================================
+# === [BAGIAN MUTASI ANDA: STREAMLIT UI] ===
+# ============================================
+
+st.markdown("---")
+st.subheader("🧬 Tahap Akhir GA: Proses Mutasi (Tugas Saya)")
+
+if 'children' in st.session_state:
+    children_for_mutation = st.session_state['children']
+    st.info(f"Ada {len(children_for_mutation)} data anak (children) siap diproses untuk Mutasi.")
+    
+    # Input parameter Mutation Rate (Probabilitas Mutasi)
+    mutation_rate = st.slider("Tentukan Mutation Rate (Probabilitas)", min_value=0.0, max_value=1.0, value=0.2, step=0.05)
+    debug_mutation = st.checkbox("Aktifkan Log Debug Mutasi", value=True)
+    
+    if st.button("Jalankan Swap Mutation (Proses Mutasi) 🚀"):
+        mutated_pop, count, logs = mutate_all_children(
+            children_for_mutation, 
+            mutation_rate=mutation_rate, 
+            debug=debug_mutation
+        )
+        
+        # Simpan hasil mutasi ke session state agar bisa digunakan tahap evaluasi selanjutnya
+        st.session_state['mutated_children'] = mutated_pop
+        
+        st.success(f"Proses mutasi selesai! Sebanyak {count} anak berhasil mengalami Swap Mutation.")
+        
+        # Tampilkan Expander untuk melihat anak yang mengalami mutasi beserta lognya
+        if debug_mutation and logs:
+            st.write("### 📝 Log Perubahan Mutasi:")
+            for child_idx, log_list in logs.items():
+                child_item = mutated_pop[child_idx]
+                p_info = child_item.get("parents", ("?", "?"))
+                c_idx = child_item.get("child_index", "?")
+                
+                with st.expander(f"Detail Mutasi pada Anak ke-{child_idx + 1} (Parents {p_info[0]} & {p_info[1]}, C-{c_idx})"):
+                    for l in log_list:
+                        st.info(l)
+                    st.text("Jadwal setelah mutasi:")
+                    # Mengakses key ["schedule"] karena mutated_pop berisi objek dictionary
+                    st.code("\n".join(format_schedule_for_display(child_item["schedule"])))
+                        
+else:
+    st.warning("⚠️ Silakan lakukan proses 'Generate All Children' (Crossover teman) terlebih dahulu di atas sebelum melakukan langkah mutasi ini.")
+
+# === [AKHIR STREAMLIT UI MUTASI] ===
