@@ -528,10 +528,18 @@ if 'children' in st.session_state:
     count = min(10, len(children))
     for i in range(count):
         child = children[i]
-        parent_pair = child.get("parents", ("unknown", "unknown"))
-        child_index = child.get("child_index", 0)
-        with st.expander(f'Child {i+1} from parents {parent_pair[0]} & {parent_pair[1]} (child {child_index}, slots: {len(child["schedule"])})'):
-            st.code("\n".join(format_schedule_for_display(child["schedule"])))
+        # Support both dict-style child objects (new format) and legacy list-style schedules
+        if isinstance(child, dict):
+            parent_pair = child.get("parents", ("unknown", "unknown"))
+            child_index = child.get("child_index", 0)
+            schedule = child.get("schedule", [])
+        else:
+            parent_pair = ("unknown", "unknown")
+            child_index = 0
+            schedule = child
+
+        with st.expander(f'Child {i+1} from parents {parent_pair[0]} & {parent_pair[1]} (child {child_index}, slots: {len(schedule)})'):
+            st.code("\n".join(format_schedule_for_display(schedule)))
 else:
     st.info("No children generated yet. Click 'Generate All Children (All pair crossovers)' after creating parents.")
 
