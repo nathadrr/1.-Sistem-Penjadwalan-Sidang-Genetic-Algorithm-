@@ -177,7 +177,7 @@ def build_student_queue(parent, locked_student_ids):
     return queue
 
 
-def crossover_and_fill(parent1, parent2, locked_ranges=None, mahasiswa=None, availability=None):
+def crossover_and_fill(parent1, parent2, locked_ranges=None, mahasiswa=None, availability=None, debug_list=None):
     child1 = create_empty_individual(gene_count=parent1.gene_count)
     child2 = create_empty_individual(gene_count=parent2.gene_count)
 
@@ -216,21 +216,33 @@ def crossover_and_fill(parent1, parent2, locked_ranges=None, mahasiswa=None, ava
         for slot_number in range(1, SLOT_COUNT + 1):
             slot_idx = slot_number - 1
             if slot_idx in locked_indices:
+                if debug_list is not None:
+                    debug_list.append(f"child1: student {student_id} skipped slot {slot_number} (locked)")
                 continue
             if mahasiswa is not None and availability is not None:
                 if not check_availability(student_id, slot_number, mahasiswa, availability):
+                    if debug_list is not None:
+                        debug_list.append(f"child1: student {student_id} skipped slot {slot_number} (availability)")
                     continue
             room = get_empty_room(child1_schedule, slot_idx)
             if room is None:
+                if debug_list is not None:
+                    debug_list.append(f"child1: student {student_id} skipped slot {slot_number} (no empty room)")
                 continue
             if mahasiswa is not None and availability is not None and not check_conflict(child1_schedule, slot_idx, student_id, mahasiswa):
+                if debug_list is not None:
+                    debug_list.append(f"child1: student {student_id} skipped slot {slot_number} (conflict)")
                 continue
             child1_schedule[slot_idx][room] = student_id
             child1.chromosomes[slot_idx] = Chromosome(child1_schedule[slot_idx].copy(), gene_count=parent1.gene_count)
+            if debug_list is not None:
+                debug_list.append(f"child1: student {student_id} placed slot {slot_number} room {room}")
             placed = True
             break
         if not placed:
             child1_failure = f"Student {student_id} could not be placed"
+            if debug_list is not None:
+                debug_list.append(f"child1: {child1_failure}")
             break
 
     child2_failure = None
@@ -239,27 +251,39 @@ def crossover_and_fill(parent1, parent2, locked_ranges=None, mahasiswa=None, ava
         for slot_number in range(1, SLOT_COUNT + 1):
             slot_idx = slot_number - 1
             if slot_idx in locked_indices:
+                if debug_list is not None:
+                    debug_list.append(f"child2: student {student_id} skipped slot {slot_number} (locked)")
                 continue
             if mahasiswa is not None and availability is not None:
                 if not check_availability(student_id, slot_number, mahasiswa, availability):
+                    if debug_list is not None:
+                        debug_list.append(f"child2: student {student_id} skipped slot {slot_number} (availability)")
                     continue
             room = get_empty_room(child2_schedule, slot_idx)
             if room is None:
+                if debug_list is not None:
+                    debug_list.append(f"child2: student {student_id} skipped slot {slot_number} (no empty room)")
                 continue
             if mahasiswa is not None and availability is not None and not check_conflict(child2_schedule, slot_idx, student_id, mahasiswa):
+                if debug_list is not None:
+                    debug_list.append(f"child2: student {student_id} skipped slot {slot_number} (conflict)")
                 continue
             child2_schedule[slot_idx][room] = student_id
             child2.chromosomes[slot_idx] = Chromosome(child2_schedule[slot_idx].copy(), gene_count=parent2.gene_count)
+            if debug_list is not None:
+                debug_list.append(f"child2: student {student_id} placed slot {slot_number} room {room}")
             placed = True
             break
         if not placed:
             child2_failure = f"Student {student_id} could not be placed"
+            if debug_list is not None:
+                debug_list.append(f"child2: {child2_failure}")
             break
 
     return child1, child2, child1_failure, child2_failure
 
 
-def generate_all_children(parents, mahasiswa=None, availability=None, error_callback=None):
+def generate_all_children(parents, mahasiswa=None, availability=None, error_callback=None, debug=False):
     normalized_parents = normalize_parents(parents)
     if len(normalized_parents) < 2:
         raise ValueError("At least 2 parents are required to generate children")
@@ -269,11 +293,13 @@ def generate_all_children(parents, mahasiswa=None, availability=None, error_call
     for i, j in itertools.combinations(range(len(normalized_parents)), 2):
         parent1 = normalized_parents[i]
         parent2 = normalized_parents[j]
+        debug_list = [] if debug else None
         child1, child2, child1_failure, child2_failure = crossover_and_fill(
             parent1,
             parent2,
             mahasiswa=mahasiswa,
             availability=availability,
+            debug_list=debug_list,
         )
 
         if child1_failure is not None:
@@ -281,22 +307,28 @@ def generate_all_children(parents, mahasiswa=None, availability=None, error_call
             if error_callback is not None:
                 error_callback(f"Child 1 from parents {i+1} and {j+1} could not be made: {child1_failure}")
         else:
-            all_children.append({
+            entry = {
                 "parents": (i + 1, j + 1),
                 "child_index": 1,
                 "schedule": child1.to_array(),
-            })
+            }
+            if debug and debug_list is not None:
+                entry["debug"] = [m for m in debug_list]
+            all_children.append(entry)
 
         if child2_failure is not None:
             failed_children.append((i, j, 2, child2_failure))
             if error_callback is not None:
                 error_callback(f"Child 2 from parents {i+1} and {j+1} could not be made: {child2_failure}")
         else:
-            all_children.append({
+            entry = {
                 "parents": (i + 1, j + 1),
                 "child_index": 2,
                 "schedule": child2.to_array(),
-            })
+            }
+            if debug and debug_list is not None:
+                entry["debug"] = [m for m in debug_list]
+            all_children.append(entry)
 
     return all_children, failed_children
 
@@ -540,11 +572,15 @@ if 'children' in st.session_state:
 
         with st.expander(f'Child {i+1} from parents {parent_pair[0]} & {parent_pair[1]} (child {child_index}, slots: {len(schedule)})'):
             st.code("\n".join(format_schedule_for_display(schedule)))
+            if isinstance(child, dict) and child.get("debug"):
+                st.text("Debug logs:")
+                st.code("\n".join(child.get("debug")))
 else:
     st.info("No children generated yet. Click 'Generate All Children (All pair crossovers)' after creating parents.")
 
 
 if 'parents' in st.session_state and 'children' not in st.session_state:
+    debug_crossover = st.checkbox("Enable crossover debug logs", value=False)
     if st.button("Generate All Children (All pair crossovers)"):
         try:
             parents_for_ga = st.session_state['parents']
@@ -553,6 +589,7 @@ if 'parents' in st.session_state and 'children' not in st.session_state:
                 mahasiswa=mahasiswa,
                 availability=availability,
                 error_callback=st.error,
+                debug=debug_crossover,
             )
             st.session_state['children'] = children
             st.session_state['failed_children'] = failed_children
