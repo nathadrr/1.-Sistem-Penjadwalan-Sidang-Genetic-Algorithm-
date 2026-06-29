@@ -701,13 +701,8 @@ if 'parents' in st.session_state and 'children' not in st.session_state:
         except Exception as e:
             st.error(f"Failed to generate children: {e}")
 
-
-# ============================================
-# === [BAGIAN MUTASI ANDA: STREAMLIT UI] ===
-# ============================================
-
 st.markdown("---")
-st.subheader("🧬 Tahap Akhir GA: Proses Mutasi (Tugas Saya)")
+st.subheader("Proses Mutasi")
 
 if 'children' in st.session_state:
     children_for_mutation = st.session_state['children']
@@ -717,7 +712,7 @@ if 'children' in st.session_state:
     mutation_rate = st.slider("Tentukan Mutation Rate (Probabilitas)", min_value=0.0, max_value=1.0, value=0.2, step=0.05)
     debug_mutation = st.checkbox("Aktifkan Log Debug Mutasi", value=True)
     
-    if st.button("Jalankan Swap Mutation (Proses Mutasi) 🚀"):
+    if st.button("Jalankan Swap Mutation (Proses Mutasi)"):
         mutated_pop, count, logs = mutate_all_children(
             children_for_mutation, 
             mutation_rate=mutation_rate, 
@@ -731,7 +726,7 @@ if 'children' in st.session_state:
         
         # Tampilkan Expander untuk melihat anak yang mengalami mutasi beserta lognya
         if debug_mutation and logs:
-            st.write("### 📝 Log Perubahan Mutasi:")
+            st.write("### Log Perubahan Mutasi:")
             for child_idx, log_list in logs.items():
                 child_item = mutated_pop[child_idx]
                 p_info = child_item.get("parents", ("?", "?"))
@@ -745,6 +740,4 @@ if 'children' in st.session_state:
                     st.code("\n".join(format_schedule_for_display(child_item["schedule"])))
                         
 else:
-    st.warning("⚠️ Silakan lakukan proses 'Generate All Children' (Crossover teman) terlebih dahulu di atas sebelum melakukan langkah mutasi ini.")
-
-# === [AKHIR STREAMLIT UI MUTASI] ===
+    st.warning("Silakan lakukan proses 'Generate All Children' (Crossover teman) terlebih dahulu di atas sebelum melakukan langkah mutasi ini.")
