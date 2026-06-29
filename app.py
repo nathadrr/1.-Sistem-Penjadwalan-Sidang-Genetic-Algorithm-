@@ -34,8 +34,17 @@ if __name__ == "__main__":
         sys.exit(0)
 
 SLOT_COUNT = 90
-LOCKED_RANGES = [(9, 27), (54, 72)]  
+LOCKED_RANGES = [(9, 27), (54, 72)]
+ALTERNATE_LOCKED_RANGES = [(0, 9), (45, 54)]
 DEFAULT_GENE_COUNT = 4
+
+
+def get_locked_ranges_for_iteration(iteration_number=None):
+    if iteration_number is None:
+        return LOCKED_RANGES
+    if int(iteration_number) % 2 == 1:
+        return LOCKED_RANGES
+    return ALTERNATE_LOCKED_RANGES
 
 
 class Chromosome:
@@ -175,12 +184,12 @@ def build_student_queue(parent, locked_student_ids):
     return queue
 
 
-def crossover_and_fill(parent1, parent2, locked_ranges=None, mahasiswa=None, availability=None, debug_list=None):
+def crossover_and_fill(parent1, parent2, locked_ranges=None, mahasiswa=None, availability=None, debug_list=None, iteration_number=None):
     child1 = create_empty_individual(gene_count=parent1.gene_count)
     child2 = create_empty_individual(gene_count=parent2.gene_count)
 
     if locked_ranges is None:
-        locked_ranges = LOCKED_RANGES
+        locked_ranges = get_locked_ranges_for_iteration(iteration_number)
 
     locked_indices = set()
     for start, end in locked_ranges:
@@ -281,7 +290,7 @@ def crossover_and_fill(parent1, parent2, locked_ranges=None, mahasiswa=None, ava
     return child1, child2, child1_failure, child2_failure
 
 
-def generate_all_children(parents, mahasiswa=None, availability=None, error_callback=None, debug=False):
+def generate_all_children(parents, mahasiswa=None, availability=None, error_callback=None, debug=False, iteration_number=None):
     normalized_parents = normalize_parents(parents)
     if len(normalized_parents) < 2:
         raise ValueError("At least 2 parents are required to generate children")
@@ -298,6 +307,7 @@ def generate_all_children(parents, mahasiswa=None, availability=None, error_call
             mahasiswa=mahasiswa,
             availability=availability,
             debug_list=debug_list,
+            iteration_number=iteration_number,
         )
 
         if child1_failure is not None:
@@ -330,7 +340,7 @@ def generate_all_children(parents, mahasiswa=None, availability=None, error_call
 
     return all_children, failed_children
 
-def swap_mutation(child_schedule, mahasiswa, availability, mutation_rate=0.05):
+def swap_mutation(child_schedule, mahasiswa, availability, mutation_rate=0.05, iteration_number=None):
     """
     Melakukan swap mutation pada schedule (list of lists) berdasarkan mutation_rate.
     Mengikuti aturan gambar: coba hingga 3x jika invalid, batalkan jika tetap gagal.
@@ -341,8 +351,9 @@ def swap_mutation(child_schedule, mahasiswa, availability, mutation_rate=0.05):
     import copy
     mutated_schedule = copy.deepcopy(child_schedule)
     
+    locked_ranges = get_locked_ranges_for_iteration(iteration_number)
     locked_indices = set()
-    for start, end in LOCKED_RANGES:
+    for start, end in locked_ranges:
         locked_indices.update(range(start, end))
         
     available_positions = []
@@ -650,10 +661,11 @@ if st.button("Mulai", type="primary"):
             auto_mutation_rate = random.uniform(0.05, 0.10)
             
             children_data, _ = generate_all_children(
-                current_population, 
-                mahasiswa=mahasiswa, 
+                current_population,
+                mahasiswa=mahasiswa,
                 availability=availability,
-                debug=False
+                debug=False,
+                iteration_number=generasi_berhenti,
             )
             
             raw_crossover_schedules = [c["schedule"] if isinstance(c, dict) else c for c in children_data]
@@ -661,7 +673,13 @@ if st.button("Mulai", type="primary"):
             mutated_children = []
             mutated_count = 0
             for sched in raw_crossover_schedules:
-                new_schedule, is_mutated, _ = swap_mutation(sched, mahasiswa, availability, auto_mutation_rate)
+                new_schedule, is_mutated, _ = swap_mutation(
+                    sched,
+                    mahasiswa,
+                    availability,
+                    auto_mutation_rate,
+                    iteration_number=generasi_berhenti,
+                )
                 mutated_children.append(new_schedule)
                 if is_mutated:
                     mutated_count += 1
