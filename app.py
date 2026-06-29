@@ -33,10 +33,8 @@ if __name__ == "__main__":
         print(f"Run: streamlit run {script_path}")
         sys.exit(0)
 
-
-# --- Genetic algorithm utilities ---
 SLOT_COUNT = 90
-LOCKED_RANGES = [(9, 27), (54, 72)]  # 0-based indices for 1-based slots 10-27 and 55-72
+LOCKED_RANGES = [(9, 27), (54, 72)]  
 DEFAULT_GENE_COUNT = 4
 
 
@@ -332,8 +330,6 @@ def generate_all_children(parents, mahasiswa=None, availability=None, error_call
 
     return all_children, failed_children
 
-
-# --- Mutation Logic ---
 def swap_mutation(child_schedule, mahasiswa, availability, mutation_rate=0.05):
     """
     Melakukan swap mutation pada schedule (list of lists) berdasarkan mutation_rate.
@@ -345,7 +341,6 @@ def swap_mutation(child_schedule, mahasiswa, availability, mutation_rate=0.05):
     import copy
     mutated_schedule = copy.deepcopy(child_schedule)
     
-    # Ambil indeks yang tidak terkunci
     locked_indices = set()
     for start, end in LOCKED_RANGES:
         locked_indices.update(range(start, end))
@@ -356,7 +351,6 @@ def swap_mutation(child_schedule, mahasiswa, availability, mutation_rate=0.05):
             for room_idx in range(4):
                 available_positions.append((slot_idx, room_idx))
 
-    # Re-mutation loop hingga 3 kali percobaan jika melanggar kendala
     for attempt in range(1, 4):
         if len(available_positions) < 2:
             return child_schedule, False, "Posisi tidak cukup untuk swap"
@@ -371,13 +365,11 @@ def swap_mutation(child_schedule, mahasiswa, availability, mutation_rate=0.05):
         if mhs1 == 0 and mhs2 == 0:
             continue
             
-        # Jalankan proses swap sementara
         mutated_schedule[slot1][room1] = mhs2
         mutated_schedule[slot2][room2] = mhs1
         
         valid = True
         
-        # Validasi mhs2 di posisi barunya (slot1)
         if mhs2 != 0:
             if not check_availability(mhs2, slot1 + 1, mahasiswa, availability):
                 valid = False
@@ -386,7 +378,6 @@ def swap_mutation(child_schedule, mahasiswa, availability, mutation_rate=0.05):
                 valid = False
             mutated_schedule[slot1][room1] = mhs2
             
-        # Validasi mhs1 di posisi barunya (slot2)
         if mhs1 != 0 and valid:
             if not check_availability(mhs1, slot2 + 1, mahasiswa, availability):
                 valid = False
@@ -398,14 +389,10 @@ def swap_mutation(child_schedule, mahasiswa, availability, mutation_rate=0.05):
         if valid:
             return mutated_schedule, True, f"Berhasil mutasi (Percobaan ke-{attempt}): Swap Slot {slot1+1} Rm {room1} <-> Slot {slot2+1} Rm {room2}"
         else:
-            # Kembalikan posisi semula (Rollback) untuk mencoba perulangan berikutnya
             mutated_schedule[slot1][room1] = mhs1
             mutated_schedule[slot2][room2] = mhs2
 
     return child_schedule, False, "Gagal mutasi: Tidak menemukan slot valid setelah 3x Re-Mutation (Mutasi Dibatalkan)"
-
-
-# --- Preprocessing & GA functions ---
 
 def preprocessing_availability(df):
     availability = {}
@@ -477,7 +464,6 @@ def generate_initial_population(population_size, mahasiswa, availability, max_re
     )
 
     progress_bar = st.progress(0, text="Memulai generate populasi...")
-    status_log = st.empty()
 
     individu_ke = 0
     while len(population) < population_size:
@@ -527,10 +513,7 @@ def generate_initial_population(population_size, mahasiswa, availability, max_re
         if gagal == 0:
             population.append(chromosome)
             pct = len(population) / population_size
-            progress_bar.progress(pct, text=f"Individu {len(population)}/{population_size} berhasil (percobaan ke-{individu_ke})")
-            status_log.text(f"Percobaan ke-{individu_ke} → berhasil ({len(population)}/{population_size})")
-        else:
-            status_log.text(f"Percobaan ke-{individu_ke} → dibuang ({gagal} mhs gagal ditempatkan)")
+            progress_bar.progress(pct, text=f"Individu {len(population)}/{population_size} berhasil digenerate")
 
     if len(population) == population_size:
         progress_bar.progress(1.0, text=f"Selesai! {population_size} individu berhasil digenerate.")
@@ -553,8 +536,42 @@ def format_schedule_for_display(schedule):
 
     return schedule
 
+def hitung_fitness(schedule):
+    """
+    Menghitung nilai fitness berdasarkan jumlah sesi kosong di belakang (proposal hal. 15).
+    Sesi dihitung kosong jika SELURUH 4 RUANGAN pada sesi tersebut bernilai 0.
+    """
+    if hasattr(schedule, "to_array"):
+        schedule = schedule.to_array()
+        
+    total_sesi = len(schedule)
+    sesi_kosong_di_belakang = 0
+    
+    for slot_idx in range(total_sesi - 1, -1, -1):
+        if all(mhs == 0 for mhs in schedule[slot_idx][:4]):
+            sesi_kosong_di_belakang += 1
+        else:
+            break
+            
+    return sesi_kosong_di_belakang
 
-# --- Streamlit UI ---
+def selection_validation(children_population, population_size):
+    """
+    HANYA mengevaluasi populasi anak (children hasil crossover + mutasi).
+    Induk (Parents) dari generasi sebelumnya tidak dimasukkan ke kompetisi generasi baru.
+    """
+    gabungan_populasi = []
+    
+    for c in children_population:
+        sched = c["schedule"] if isinstance(c, dict) else c
+        score = hitung_fitness(sched)
+        gabungan_populasi.append({"schedule": sched, "fitness": score, "type": "Child"})
+        
+    gabungan_populasi.sort(key=lambda x: x["fitness"], reverse=True)
+    
+    terpilih = gabungan_populasi[:population_size]
+    
+    return [item["schedule"] for item in terpilih], terpilih
 
 st.title("Sistem Penjadwalan Sidang Menggunakan Genetic Algorithm")
 
@@ -581,22 +598,11 @@ if uploaded_availability is not None and uploaded_mahasiswa is not None:
 col1, col2 = st.columns(2)
 
 with col1:
-    population_size = st.number_input(
-    "Jumlah Populasi",
-    min_value=2,
-    max_value=500,
-    value=15,
-    step=1
-)
+    population_size = st.number_input("Jumlah Populasi", min_value=2, max_value=500, value=15, step=1)
 
 with col2:
-    max_retries = st.number_input(
-    "Maks Percobaan",
-    min_value=10,
-    max_value=5000,
-    value=500,
-    step=10
-)
+    max_generations = st.number_input("Maksimal Iterasi (Generasi)", min_value=10, max_value=500, value=100, step=10)
+
 
 if st.button("Generate Populasi Awal"):
     if not mahasiswa or not availability:
@@ -606,129 +612,163 @@ if st.button("Generate Populasi Awal"):
             population_size,
             mahasiswa,
             availability,
-            max_retries=int(max_retries)
+            max_retries=2000 
         )
 
-    st.session_state['parents'] = population
-    st.success(f"Populasi berhasil dibuat! ({len(population)} individu)")
+        st.session_state['parents'] = population
+        st.session_state['all_logs'] = [] 
+        st.success(f"Populasi berhasil dibuat! ({len(population)} individu)")
 
-    for i, chromosome in enumerate(population, start=1):
-        st.subheader(f"Populasi {i}")
-        st.code(str(format_schedule_for_display(chromosome)))
-        st.divider()
+st.divider()
+st.header("Proses GA")
+st.info("Algoritma akan menjalankan seluruh proses (Crossover -> Mutasi -> Seleksi Keturunan) secara otomatis per generasi.")
 
-
-# Display parents and children
-if 'parents' in st.session_state:
-    st.header('Initial Parents')
-    parents = st.session_state['parents']
-    for i, parent in enumerate(parents, start=1):
-        with st.expander(f'Parent {i}'):
-            st.code("\n".join(format_schedule_for_display(parent)))
-
-if 'children' in st.session_state:
-    children = st.session_state['children']
-    st.header('First 10 Children')
-    count = min(10, len(children))
-    for i in range(count):
-        child = children[i]
-        if isinstance(child, dict):
-            parent_pair = child.get("parents", ("unknown", "unknown"))
-            child_index = child.get("child_index", 0)
-            schedule = child.get("schedule", [])
-        else:
-            parent_pair = ("unknown", "unknown")
-            child_index = 0
-            schedule = child
-
-        with st.expander(f'Child {i+1} from parents {parent_pair[0]} & {parent_pair[1]} (child {child_index}, slots: {len(schedule)})'):
-            st.code("\n".join(format_schedule_for_display(schedule)))
-            if isinstance(child, dict) and child.get("debug"):
-                st.text("Debug logs:")
-                st.code("\n".join(child.get("debug")))
-else:
-    st.info("No children generated yet. Click 'Generate All Children (All pair crossovers)' after creating parents.")
-
-
-if 'parents' in st.session_state and 'children' not in st.session_state:
-    debug_crossover = st.checkbox("Enable crossover debug logs", value=False)
-    if st.button("Generate All Children (All pair crossovers)"):
-        try:
-            parents_for_ga = st.session_state['parents']
-            children, failed_children = generate_all_children(
-                parents_for_ga,
-                mahasiswa=mahasiswa,
+if st.button("Mulai", type="primary"):
+    if 'parents' not in st.session_state or len(st.session_state['parents']) < 2:
+        st.error("Silakan generate populasi awal terlebih dahulu di bagian atas!")
+    else:
+        current_population = st.session_state['parents']
+        pop_size = int(population_size)
+        
+        progress_bar = st.progress(0, text="Memulai evolusi otomatis...")
+        status_text = st.empty()
+        
+        stagnasi_tercapai = False
+        generasi_berhenti = 0
+        data_lengkap_terakhir = []
+        
+        stagnation_counter = 0
+        best_fitness_history = -1
+        
+        all_logs = []
+        
+        for gen in range(int(max_generations)):
+            generasi_berhenti = gen + 1
+            
+            parents_for_this_gen = current_population.copy()
+            
+            auto_mutation_rate = random.uniform(0.05, 0.10)
+            
+            children_data, _ = generate_all_children(
+                current_population, 
+                mahasiswa=mahasiswa, 
                 availability=availability,
-                error_callback=st.error,
-                debug=debug_crossover,
+                debug=False
             )
-            st.session_state['children'] = children
-            st.session_state['failed_children'] = failed_children
-            st.success(f"Generated {len(children)} children and stored in session as 'children'.")
-            if failed_children:
-                st.warning(f"{len(failed_children)} child pair(s) could not be made.")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Failed to generate children: {e}")
-
-# --- Interface & UI untuk Proses Mutasi ---
-if 'children' in st.session_state and len(st.session_state['children']) > 0:
-    st.divider()
-    st.header("Proses Mutasi")
-    
-    children_data = st.session_state['children']
-    st.info(f"Ada {len(children_data)} data anak (children) siap diproses untuk Mutasi.")
-    
-    mutation_rate = st.slider("Tentukan Mutation Rate (Probabilitas)", min_value=0.00, max_value=1.00, value=0.05, step=0.01)
-    debug_mutation = st.checkbox("Aktifkan Log Debug Mutasi", value=True)
-    
-    if st.button("Jalankan Swap Mutation (Proses Mutasi)"):
-        mutated_children = []
-        success_count = 0
-        mutation_logs = []
-        
-        for idx, child in enumerate(children_data):
-            if isinstance(child, dict):
-                schedule = child.get("schedule", [])
-                parent_pair = child.get("parents", ("unknown", "unknown"))
-                child_idx = child.get("child_index", 0)
+            
+            raw_crossover_schedules = [c["schedule"] if isinstance(c, dict) else c for c in children_data]
+            
+            mutated_children = []
+            mutated_count = 0
+            for sched in raw_crossover_schedules:
+                new_schedule, is_mutated, _ = swap_mutation(sched, mahasiswa, availability, auto_mutation_rate)
+                mutated_children.append(new_schedule)
+                if is_mutated:
+                    mutated_count += 1
+                
+            current_population, data_lengkap_terakhir = selection_validation(
+                mutated_children, 
+                pop_size
+            )
+            
+            best_fitness_current = data_lengkap_terakhir[0]["fitness"] if data_lengkap_terakhir else 0
+            
+            if best_fitness_current == best_fitness_history:
+                stagnation_counter += 1
             else:
-                schedule = child
-                parent_pair = ("unknown", "unknown")
-                child_idx = 0
+                stagnation_counter = 0
+                best_fitness_history = best_fitness_current
                 
-            # Proses mutasi dengan skema Re-Mutation 3x
-            new_schedule, is_mutated, log_msg = swap_mutation(schedule, mahasiswa, availability, mutation_rate)
+            all_logs.append({
+                "gen": generasi_berhenti,
+                "parents_schedules": parents_for_this_gen,
+                "crossover_count": len(raw_crossover_schedules),
+                "crossover_schedules": raw_crossover_schedules,
+                "mutation_count": mutated_count,
+                "mutation_rate": auto_mutation_rate,
+                "mutated_schedules": mutated_children,
+                "selection_data": data_lengkap_terakhir,
+                "best_fitness": best_fitness_current
+            })
             
-            if is_mutated:
-                success_count += 1
+            pct_complete = generasi_berhenti / int(max_generations)
+            progress_bar.progress(
+                pct_complete, 
+                text=f"Generasi {generasi_berhenti}/{max_generations} | Best Fitness: {best_fitness_current} | Stagnasi: {stagnation_counter}/15"
+            )
+            
+            if stagnation_counter >= 15:
+                stagnasi_tercapai = True
+                break
                 
-            entry = {
-                "parents": parent_pair,
-                "child_index": child_idx,
-                "schedule": new_schedule,
-                "mutated": is_mutated,
-                "log": log_msg
-            }
-            mutated_children.append(entry)
-            mutation_logs.append(f"Anak {idx+1} (P{parent_pair[0]}xP{parent_pair[1]} C{child_idx}): {log_msg}")
-            
-        st.session_state['mutated_children'] = mutated_children
         
-        if success_count > 0:
-            st.success(f"Proses mutasi selesai! Sebanyak {success_count} anak berhasil mengalami Swap Mutation.")
+        st.session_state['parents'] = current_population
+        st.session_state['all_logs'] = all_logs
+        st.session_state['final_ranking'] = data_lengkap_terakhir
+        
+        if stagnasi_tercapai:
+            status_text.success(f"**Evolusi Selesai Lebih Awal!** Algoritma berhenti pada Generasi ke-{generasi_berhenti} karena nilai fitness tertinggi ({best_fitness_history}) stagnan selama 15 generasi berturut-turut.")
         else:
-            st.success(f"Proses mutasi selesai! Sebanyak 0 anak berhasil mengalami Swap Mutation.")
-            
-        if debug_mutation:
-            st.subheader("Log Hasil Mutasi:")
-            for log in mutation_logs:
-                st.text(log)
+            status_text.success(f"**Evolusi Selesai!** Berhasil menyelesaikan {max_generations} iterasi secara penuh.")
 
-if 'mutated_children' in st.session_state:
-    st.header('Hasil Akhir Setelah Mutasi')
-    mutated_children_list = st.session_state['mutated_children']
-    for i, child_mut in enumerate(mutated_children_list):
-        status_label = "👉 Ter-mutasi" if child_mut["mutated"] else "🔒 Tetap (Tidak Bermutasi/Gagal)"
-        with st.expander(f'Individu Akhir {i+1} dari P{child_mut["parents"][0]} & P{child_mut["parents"][1]} ({status_label})'):
-            st.code("\n".join(format_schedule_for_display(child_mut["schedule"])))
+if 'final_ranking' in st.session_state:
+    st.subheader(f"Hasil Akhir Jadwal Terbaik")
+    
+    ranking_data = []
+    for rank, item in enumerate(st.session_state['final_ranking'], start=1):
+        ranking_data.append({
+            "Rank": rank,
+            "Fitness Score (Sesi Kosong)": item["fitness"],
+            "Jadwal Sesi (Full Array)": str(item["schedule"])
+        })
+        
+    st.dataframe(pd.DataFrame(ranking_data), use_container_width=True)
+    
+    st.write("Detail Jadwal Terbaik:")
+    batas_tampil = len(st.session_state['final_ranking'])
+    for i in range(batas_tampil):
+        item = st.session_state['final_ranking'][i]
+        with st.expander(f'Rank {i+1} (Fitness: {item["fitness"]})'):
+            st.code("\n".join(format_schedule_for_display(item["schedule"])))
+
+
+if 'all_logs' in st.session_state and len(st.session_state['all_logs']) > 0:
+    st.divider()
+    st.subheader("Log Detail per Generasi")
+    
+    total_gen_tersedia = len(st.session_state['all_logs'])
+    pilihan_gen = st.selectbox(
+        "Pilih Generasi untuk melihat detail:", 
+        options=range(1, total_gen_tersedia + 1),
+        index=total_gen_tersedia - 1 
+    )
+    
+    log_data = st.session_state['all_logs'][pilihan_gen - 1]
+    
+    st.markdown(f"**Menampilkan Data Generasi ke-{log_data['gen']} | Best Fitness Akhir Gen:** `{log_data['best_fitness']}`")
+    
+    tab_par, tab_cross, tab_mut, tab_sel = st.tabs(["0. Parent Generasi", "1. Hasil Crossover", "2. Hasil Mutasi", "3. Hasil Seleksi (Top)"])
+    
+    with tab_par:
+        st.write(f"Terdapat **{len(log_data['parents_schedules'])}** individu Parent yang mewariskan gen (digunakan untuk Crossover) pada generasi ini.")
+        for i, sched in enumerate(log_data['parents_schedules']):
+            with st.expander(f"Parent {i+1}"):
+                st.code("\n".join(format_schedule_for_display(sched)))
+                
+    with tab_cross:
+        st.write(f"Dihasilkan **{log_data['crossover_count']}** keturunan baru (Children) dari Parent di atas.")
+        for i, sched in enumerate(log_data['crossover_schedules']):
+            with st.expander(f"Child {i+1}"):
+                st.code("\n".join(format_schedule_for_display(sched)))
+                
+    with tab_mut:
+        st.write(f"Probabilitas Mutasi: **{log_data['mutation_rate']:.2%}**. Terdapat **{log_data['mutation_count']}** individu yang berhasil mengalami Swap Mutation.")
+        for i, sched in enumerate(log_data['mutated_schedules']):
+            with st.expander(f"Individu Setelah Proses Mutasi {i+1}"):
+                st.code("\n".join(format_schedule_for_display(sched)))
+                
+    with tab_sel:
+        st.write("Hasil seleksi yang mengurutkan populasi Keturunan (Child) berdasarkan skor Fitness terbaik. Parent dari generasi sebelumnya telah gugur.")
+        for i, item in enumerate(log_data['selection_data']):
+            with st.expander(f"Rank {i+1} (Fitness: {item['fitness']})"):
+                st.code("\n".join(format_schedule_for_display(item['schedule'])))
