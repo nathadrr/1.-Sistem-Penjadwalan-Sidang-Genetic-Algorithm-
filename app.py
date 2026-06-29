@@ -1,6 +1,7 @@
 import importlib
 import subprocess
 import sys
+from io import BytesIO
 
 
 def install_and_import(packages):
@@ -547,6 +548,26 @@ def format_schedule_for_display(schedule):
 
     return schedule
 
+
+def build_best_schedule_excel_bytes(schedule):
+    if hasattr(schedule, "to_array"):
+        schedule = schedule.to_array()
+
+    rows = []
+    for slot_idx, slot in enumerate(schedule, start=1):
+        row = {"slot": slot_idx}
+        for room_idx in range(4):
+            row[f"room_{room_idx + 1}"] = int(slot[room_idx]) if len(slot) > room_idx else 0
+        rows.append(row)
+
+    df = pd.DataFrame(rows)
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, sheet_name="Best Schedule", index=False)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 def hitung_fitness(schedule):
     """
     Menghitung nilai fitness berdasarkan jumlah sesi kosong di belakang (proposal hal. 15).
@@ -741,6 +762,16 @@ if 'final_ranking' in st.session_state:
         })
         
     st.dataframe(pd.DataFrame(ranking_data), use_container_width=True)
+
+    if st.session_state['final_ranking']:
+        best_schedule = st.session_state['final_ranking'][0]["schedule"]
+        excel_bytes = build_best_schedule_excel_bytes(best_schedule)
+        st.download_button(
+            "Unduh Jadwal Terbaik (.xlsx)",
+            data=excel_bytes,
+            file_name="best_schedule.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
     
     st.write("Detail Jadwal Terbaik:")
     batas_tampil = len(st.session_state['final_ranking'])
