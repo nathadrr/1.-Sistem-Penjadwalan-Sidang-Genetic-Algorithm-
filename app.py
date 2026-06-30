@@ -518,7 +518,6 @@ def generate_initial_population(population_size, mahasiswa, availability, max_re
             break
 
         chromosome = [[0] * jumlah_ruangan for _ in range(jumlah_slot)]
-        random.shuffle(daftar_mahasiswa)
 
         gagal = 0
         for id_mhs in daftar_mahasiswa:
