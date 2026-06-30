@@ -342,10 +342,6 @@ def generate_all_children(parents, mahasiswa=None, availability=None, error_call
     return all_children, failed_children
 
 def swap_mutation(child_schedule, mahasiswa, availability, mutation_rate=0.05, iteration_number=None):
-    """
-    Melakukan swap mutation pada schedule (list of lists) berdasarkan mutation_rate.
-    Mengikuti aturan gambar: coba hingga 3x jika invalid, batalkan jika tetap gagal.
-    """
     if random.random() > mutation_rate:
         return child_schedule, False, "Tidak terkena probabilitas mutasi"
 
@@ -569,10 +565,6 @@ def build_best_schedule_excel_bytes(schedule):
 
 
 def hitung_fitness(schedule):
-    """
-    Menghitung nilai fitness berdasarkan jumlah sesi kosong di belakang (proposal hal. 15).
-    Sesi dihitung kosong jika SELURUH 4 RUANGAN pada sesi tersebut bernilai 0.
-    """
     if hasattr(schedule, "to_array"):
         schedule = schedule.to_array()
         
@@ -588,10 +580,6 @@ def hitung_fitness(schedule):
     return sesi_kosong_di_belakang
 
 def selection_validation(children_population, population_size):
-    """
-    HANYA mengevaluasi populasi anak (children hasil crossover + mutasi).
-    Induk (Parents) dari generasi sebelumnya tidak dimasukkan ke kompetisi generasi baru.
-    """
     gabungan_populasi = []
     
     for c in children_population:
