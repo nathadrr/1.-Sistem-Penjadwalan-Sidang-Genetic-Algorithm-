@@ -19,6 +19,7 @@ import pandas as pd
 import random
 import os
 import itertools
+import math
 
 
 try:
@@ -38,6 +39,22 @@ SLOT_COUNT = 90
 LOCKED_RANGES = [(9, 27), (54, 72)]
 ALTERNATE_LOCKED_RANGES = [(0, 9), (45, 54)]
 DEFAULT_GENE_COUNT = 4
+
+
+def expand_locked_ranges(base_ranges, schedule_length, cycle_length=SLOT_COUNT):
+    if schedule_length <= 0 or not base_ranges:
+        return []
+    expanded = []
+    repeat_count = math.ceil(schedule_length / cycle_length)
+    for k in range(repeat_count):
+        offset = k * cycle_length
+        for start, end in base_ranges:
+            expanded_start = offset + start
+            expanded_end = offset + end
+            if expanded_start >= schedule_length:
+                continue
+            expanded.append((expanded_start, min(expanded_end, schedule_length)))
+    return expanded
 
 
 def get_locked_ranges_for_iteration(iteration_number=None):
@@ -63,13 +80,13 @@ class Chromosome:
 
 
 class Individual:
-    def __init__(self, chromosomes=None, gene_count=DEFAULT_GENE_COUNT):
+    def __init__(self, chromosomes=None, gene_count=DEFAULT_GENE_COUNT, slot_count=None):
         self.gene_count = gene_count
         if chromosomes is None:
-            self.chromosomes = [Chromosome(gene_count=gene_count) for _ in range(SLOT_COUNT)]
+            if slot_count is None:
+                slot_count = SLOT_COUNT
+            self.chromosomes = [Chromosome(gene_count=gene_count) for _ in range(slot_count)]
         else:
-            if len(chromosomes) != SLOT_COUNT:
-                raise ValueError(f"Individual must have exactly {SLOT_COUNT} chromosomes")
             self.chromosomes = chromosomes
 
     def to_array(self):
@@ -79,18 +96,18 @@ class Individual:
         return f"Individual with {len(self.chromosomes)} chromosomes"
 
 
-def create_empty_individual(gene_count=DEFAULT_GENE_COUNT):
-    return Individual([Chromosome([0 for _ in range(gene_count)]) for _ in range(SLOT_COUNT)], gene_count=gene_count)
+def create_empty_individual(gene_count=DEFAULT_GENE_COUNT, slot_count=None):
+    if slot_count is None:
+        slot_count = SLOT_COUNT
+    return Individual([Chromosome([0 for _ in range(gene_count)]) for _ in range(slot_count)], gene_count=gene_count)
 
 
 def build_parent_from_array(parent_array):
-    if len(parent_array) != SLOT_COUNT:
-        raise ValueError(f"Parent must contain exactly {SLOT_COUNT} chromosomes")
     chromosomes = []
     for genes in parent_array:
         gene_list = [int(g) for g in genes]
         chromosomes.append(Chromosome(gene_list, gene_count=len(gene_list)))
-    return Individual(chromosomes=chromosomes, gene_count=len(chromosomes[0].genes))
+    return Individual(chromosomes=chromosomes, gene_count=len(chromosomes[0].genes), slot_count=len(chromosomes))
 
 
 def normalize_parents(parents):
@@ -108,6 +125,12 @@ def normalize_parents(parents):
 def parse_numbers_from_line(line):
     cleaned = line.replace('\t', ' ').replace(',', ' ').replace('[', ' ').replace(']', ' ')
     return [int(part) for part in cleaned.split() if part.lstrip('-').isdigit()]
+
+
+def get_slot_count_from_numbers(numbers, gene_count=DEFAULT_GENE_COUNT):
+    if gene_count <= 0:
+        return SLOT_COUNT
+    return math.ceil(len(numbers) / gene_count)
 
 
 def load_parents_from_file(filename="parents.txt"):
@@ -155,16 +178,18 @@ def load_parents_from_file(filename="parents.txt"):
         numbers = parent_blocks[parent_name]
         if not numbers:
             continue
-        gene_count = len(numbers) // SLOT_COUNT if len(numbers) % SLOT_COUNT == 0 else DEFAULT_GENE_COUNT
+        gene_count = DEFAULT_GENE_COUNT if len(numbers) >= DEFAULT_GENE_COUNT else len(numbers)
+        slot_count = get_slot_count_from_numbers(numbers, gene_count)
+        needed = slot_count * gene_count - len(numbers)
+        if needed > 0:
+            numbers = numbers + [0] * needed
         chromosomes = []
-        for slot_idx in range(SLOT_COUNT):
+        for slot_idx in range(slot_count):
             start = slot_idx * gene_count
             end = start + gene_count
             genes = numbers[start:end]
-            if len(genes) < gene_count:
-                genes = genes + [0] * (gene_count - len(genes))
             chromosomes.append(Chromosome(genes, gene_count=gene_count))
-        parents.append(Individual(chromosomes=chromosomes, gene_count=gene_count))
+        parents.append(Individual(chromosomes=chromosomes, gene_count=gene_count, slot_count=slot_count))
 
     return parents
 
@@ -186,12 +211,15 @@ def build_student_queue(parent, locked_student_ids):
 
 
 def crossover_and_fill(parent1, parent2, locked_ranges=None, mahasiswa=None, availability=None, debug_list=None, iteration_number=None):
-    child1 = create_empty_individual(gene_count=parent1.gene_count)
-    child2 = create_empty_individual(gene_count=parent2.gene_count)
+    slot_count = len(parent1.chromosomes)
+    child1 = create_empty_individual(gene_count=parent1.gene_count, slot_count=slot_count)
+    child2 = create_empty_individual(gene_count=parent2.gene_count, slot_count=slot_count)
 
     if locked_ranges is None:
         locked_ranges = get_locked_ranges_for_iteration(iteration_number)
 
+    schedule_length = len(parent1.chromosomes)
+    locked_ranges = expand_locked_ranges(locked_ranges, schedule_length)
     locked_indices = set()
     for start, end in locked_ranges:
         locked_indices.update(range(start, end))
@@ -221,7 +249,7 @@ def crossover_and_fill(parent1, parent2, locked_ranges=None, mahasiswa=None, ava
     child1_failure = None
     for student_id in child1_queue:
         placed = False
-        for slot_number in range(1, SLOT_COUNT + 1):
+        for slot_number in range(1, len(parent1.chromosomes) + 1):
             slot_idx = slot_number - 1
             if slot_idx in locked_indices:
                 if debug_list is not None:
@@ -256,7 +284,7 @@ def crossover_and_fill(parent1, parent2, locked_ranges=None, mahasiswa=None, ava
     child2_failure = None
     for student_id in child2_queue:
         placed = False
-        for slot_number in range(1, SLOT_COUNT + 1):
+        for slot_number in range(1, len(parent2.chromosomes) + 1):
             slot_idx = slot_number - 1
             if slot_idx in locked_indices:
                 if debug_list is not None:
@@ -349,12 +377,14 @@ def swap_mutation(child_schedule, mahasiswa, availability, mutation_rate=0.05, i
     mutated_schedule = copy.deepcopy(child_schedule)
     
     locked_ranges = get_locked_ranges_for_iteration(iteration_number)
+    schedule_length = len(child_schedule)
+    locked_ranges = expand_locked_ranges(locked_ranges, schedule_length)
     locked_indices = set()
     for start, end in locked_ranges:
         locked_indices.update(range(start, end))
         
     available_positions = []
-    for slot_idx in range(SLOT_COUNT):
+    for slot_idx in range(schedule_length):
         if slot_idx not in locked_indices:
             for room_idx in range(4):
                 available_positions.append((slot_idx, room_idx))
@@ -464,7 +494,9 @@ def jumlah_slot_valid(id_mhs, mahasiswa, availability):
 
 def generate_initial_population(population_size, mahasiswa, availability, max_retries=500):
     population = []
-    jumlah_slot = SLOT_COUNT
+    jumlah_slot = max((slot for slots in availability.values() for slot in slots), default=SLOT_COUNT)
+    if jumlah_slot <= 0:
+        jumlah_slot = SLOT_COUNT
     jumlah_ruangan = 4
     daftar_mahasiswa = sorted(
         mahasiswa.keys(),
@@ -550,9 +582,10 @@ def build_best_schedule_excel_bytes(schedule):
         schedule = schedule.to_array()
 
     rows = []
+    max_rooms = max((len(slot) for slot in schedule), default=4)
     for slot_idx, slot in enumerate(schedule, start=1):
         row = {"slot": slot_idx}
-        for room_idx in range(4):
+        for room_idx in range(max_rooms):
             row[f"room_{room_idx + 1}"] = int(slot[room_idx]) if len(slot) > room_idx else 0
         rows.append(row)
 
@@ -572,7 +605,7 @@ def hitung_fitness(schedule):
     sesi_kosong_di_belakang = 0
     
     for slot_idx in range(total_sesi - 1, -1, -1):
-        if all(mhs == 0 for mhs in schedule[slot_idx][:4]):
+        if all(mhs == 0 for mhs in schedule[slot_idx]):
             sesi_kosong_di_belakang += 1
         else:
             break
