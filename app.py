@@ -725,11 +725,27 @@ if st.button("Mulai", type="primary"):
                 if is_mutated:
                     mutated_count += 1
                 
-            current_population, data_lengkap_terakhir = selection_validation(
-                mutated_children, 
-                pop_size
+            parent_candidates = [
+                {"schedule": sched, "fitness": hitung_fitness(sched)}
+                for sched in parents_for_this_gen
+            ]
+            parent_candidates.sort(key=lambda item: item["fitness"], reverse=True)
+            elite_parents = [item["schedule"] for item in parent_candidates[:2]]
+            elite_count = len(elite_parents)
+            remaining_slots = max(pop_size - elite_count, 0)
+
+            selected_children, selected_children_data = selection_validation(
+                mutated_children,
+                remaining_slots
             )
-            
+
+            current_population = elite_parents + selected_children
+            data_lengkap_terakhir = [
+                {"schedule": sched, "fitness": hitung_fitness(sched)}
+                for sched in current_population
+            ]
+            data_lengkap_terakhir.sort(key=lambda item: item["fitness"], reverse=True)
+
             best_fitness_current = data_lengkap_terakhir[0]["fitness"] if data_lengkap_terakhir else 0
             
             if best_fitness_current == best_fitness_history:
@@ -741,6 +757,7 @@ if st.button("Mulai", type="primary"):
             all_logs.append({
                 "gen": generasi_berhenti,
                 "parents_schedules": parents_for_this_gen,
+                "elite_parents": elite_parents,
                 "crossover_count": len(raw_crossover_schedules),
                 "crossover_schedules": raw_crossover_schedules,
                 "mutation_count": mutated_count,
